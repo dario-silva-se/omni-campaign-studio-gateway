@@ -107,7 +107,8 @@ curl -X POST localhost:8787/ai/v1/chat/completions \
 
 | Variable                     | Required | Default                  | Notes                                   |
 | ---------------------------- | -------- | ------------------------ | --------------------------------------- |
-| `UPSTREAM_API_URL`           | yes      | —                        | CRUD API base, e.g. `…/api`             |
+| `UPSTREAM_API_URL`           | yes      | —                        | CRUD API base, e.g. `…/api` (trailing slashes stripped) |
+| `UPSTREAM_TIMEOUT_MS`        | no       | `15000`                  | Upstream request timeout; exceed → `504` |
 | `MONGODB_URI`                | yes      | —                        | Mongo connection string                 |
 | `MONGODB_DB_NAME`            | yes      | —                        | Database name                           |
 | `UPSTASH_REDIS_REST_URL`     | no       | —                        | Enables Redis cache + rate limit        |
@@ -120,7 +121,7 @@ curl -X POST localhost:8787/ai/v1/chat/completions \
 | `TELEMETRY_RETENTION_DAYS`   | no       | `30`                     | TTL for `request_logs`                  |
 | `OPENAI_API_KEY`             | no       | —                        | BYOK for the AI proxy                    |
 | `ANTHROPIC_API_KEY`          | no       | —                        | BYOK for the AI proxy                    |
-| `ALLOWED_ORIGINS`            | no       | —                        | Comma-separated CORS origins            |
+| `ALLOWED_ORIGINS`            | no       | —                        | Comma-separated CORS origins — **must include the deployed frontend origin in production** |
 | `NODE_ENV`                   | no       | `development`            | `development` / `test` / `production`   |
 | `PORT`                       | no       | `8787`                   | Local dev server port                   |
 

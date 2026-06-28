@@ -41,6 +41,15 @@ export function createApp(): Hono<{ Variables: GatewayVariables }> {
       },
       allowMethods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
       allowHeaders: ['Content-Type', 'Authorization', 'X-Api-Key', 'X-Request-Id'],
+      // Let cross-origin clients read the gateway's own headers (rate-limit
+      // budget, request correlation, retry hints).
+      exposeHeaders: [
+        'X-Request-Id',
+        'X-RateLimit-Limit',
+        'X-RateLimit-Remaining',
+        'X-RateLimit-Reset',
+        'Retry-After',
+      ],
     }),
   )
 

@@ -1,13 +1,22 @@
 import { z } from 'zod'
 
+/** Strip trailing slashes from a base URL so concatenation never yields `//`. */
+export function normalizeBaseUrl(url: string): string {
+  return url.replace(/\/+$/, '')
+}
+
 /**
  * Environment schema. Validated once at module load so a misconfigured deploy
  * fails fast with a clear message instead of throwing deep inside a request.
  * Mirrors the convention used by omni-campaign-studio-api.
  */
 const EnvSchema = z.object({
-  // Upstream CRUD API we proxy to.
-  UPSTREAM_API_URL: z.string().url('UPSTREAM_API_URL must be a valid URL'),
+  // Upstream CRUD API we proxy to. Trailing slashes are stripped so that
+  // `${UPSTREAM_API_URL}/health` and `UPSTREAM_API_URL + subPath` never double up.
+  UPSTREAM_API_URL: z
+    .string()
+    .url('UPSTREAM_API_URL must be a valid URL')
+    .transform(normalizeBaseUrl),
 
   // Mongo (api keys, telemetry, usage rollups).
   MONGODB_URI: z.string().min(1, 'MONGODB_URI is required'),
@@ -22,6 +31,10 @@ const EnvSchema = z.object({
   JWT_SECRET: z.string().optional().or(z.literal('')),
   JWT_ISSUER: z.string().optional().or(z.literal('')),
   JWT_AUDIENCE: z.string().optional().or(z.literal('')),
+
+  // Upstream request timeout (ms). Aligns with the frontend axios timeout so a
+  // slow upstream fails fast instead of holding the serverless function open.
+  UPSTREAM_TIMEOUT_MS: z.coerce.number().int().positive().default(15000),
 
   // Rate limiting (per principal, 1s sliding window).
   RATELIMIT_RPS: z.coerce.number().int().positive().default(1000),

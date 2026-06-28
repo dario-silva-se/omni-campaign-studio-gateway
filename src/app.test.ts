@@ -108,6 +108,37 @@ describe('gateway pipeline', () => {
     expect(Array.isArray(body)).toBe(true)
   })
 
+  it('exposes gateway headers to cross-origin clients', async () => {
+    const res = await app.request('/api/campaigns', {
+      headers: { authorization: 'Bearer gw_admin', origin: 'http://localhost:5173' },
+    })
+    const exposed = res.headers.get('access-control-expose-headers') ?? ''
+    expect(exposed).toContain('X-RateLimit-Limit')
+    expect(exposed).toContain('X-Request-Id')
+  })
+
+  it('maps an upstream timeout to 504 and other failures to 502', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        const err = new Error('timed out')
+        err.name = 'TimeoutError'
+        throw err
+      }),
+    )
+    const timeout = await app.request('/api/campaigns', auth('gw_admin'))
+    expect(timeout.status).toBe(504)
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('ECONNREFUSED')
+      }),
+    )
+    const unreachable = await app.request('/api/campaigns', auth('gw_admin'))
+    expect(unreachable.status).toBe(502)
+  })
+
   it('enforces method-based scopes (write needs api:write)', async () => {
     const res = await app.request('/api/campaigns', {
       method: 'POST',
