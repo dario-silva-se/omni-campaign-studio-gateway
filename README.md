@@ -60,13 +60,27 @@ it also records `401/403/429/402` rejections.
 | Method(s)        | Path                          | Auth / scope      | Purpose                              |
 | ---------------- | ----------------------------- | ----------------- | ------------------------------------ |
 | GET              | `/_gw/health`                 | public            | upstream + Mongo + Redis liveness    |
+| POST             | `/_gw/auth/login`             | public (IP-limited) | email+password → access token + refresh cookie |
+| POST             | `/_gw/auth/refresh`           | refresh cookie    | rotate refresh → new access token    |
+| POST             | `/_gw/auth/logout`            | refresh cookie    | revoke session + clear cookie        |
+| GET              | `/_gw/auth/me`                | any authenticated | current principal (tenant + scopes)  |
 | GET              | `/_gw/metrics`                | `admin`           | Prometheus (`?format=json` for JSON) |
 | GET              | `/_gw/usage`                  | any authenticated | tenant requests/tokens/cost + budget |
 | POST/GET/DELETE  | `/_gw/keys`(`/:id`)           | `admin`           | issue / list / revoke API keys       |
+| POST/GET/DELETE  | `/_gw/users`(`/:id`)          | `admin`           | create / list / disable login users  |
 | POST             | `/ai/v1/chat/completions`     | `ai:invoke`       | OpenAI-compatible AI proxy           |
 | GET/POST/PATCH/DELETE | `/api/*`                 | `api:read`/`api:write` | reverse proxy to the CRUD API   |
 
 **Scopes:** `api:read`, `api:write`, `ai:invoke`, `admin` (implies all).
+
+### Authentication
+
+Two credential types resolve to the same scoped `Principal`:
+
+- **API keys** (`gw_…`) — for server-to-server callers. Issue via `/_gw/keys` or `npm run seed:keys`.
+- **User login + JWT** — for the browser. `POST /_gw/auth/login` returns a short-lived HS256 access token
+  (sent as `Authorization: Bearer`) and sets an httpOnly **refresh** cookie; `/_gw/auth/refresh` rotates it.
+  Create users via `/_gw/users` (admin) or `npm run seed:user`. Requires `JWT_SECRET` to be set.
 
 ## Local setup
 
@@ -102,25 +116,30 @@ curl -X POST localhost:8787/ai/v1/chat/completions \
 | `npm run lint`       | ESLint                                       |
 | `npm test`           | Vitest (Mongo/Redis mocked or in-memory)     |
 | `npm run seed:keys`  | Create indexes + mint a bootstrap admin key  |
+| `npm run seed:user`  | Create indexes + create a bootstrap admin user |
 
 ## Environment
 
 | Variable                     | Required | Default                  | Notes                                   |
 | ---------------------------- | -------- | ------------------------ | --------------------------------------- |
-| `UPSTREAM_API_URL`           | yes      | —                        | CRUD API base, e.g. `…/api`             |
+| `UPSTREAM_API_URL`           | yes      | —                        | CRUD API base, e.g. `…/api` (trailing slashes stripped) |
+| `UPSTREAM_TIMEOUT_MS`        | no       | `15000`                  | Upstream request timeout; exceed → `504` |
 | `MONGODB_URI`                | yes      | —                        | Mongo connection string                 |
 | `MONGODB_DB_NAME`            | yes      | —                        | Database name                           |
 | `UPSTASH_REDIS_REST_URL`     | no       | —                        | Enables Redis cache + rate limit        |
 | `UPSTASH_REDIS_REST_TOKEN`   | no       | —                        | Required alongside the URL              |
-| `JWT_JWKS_URL` / `JWT_SECRET`| no       | —                        | Enables JWT auth (one of the two)       |
+| `JWT_JWKS_URL` / `JWT_SECRET`| no       | —                        | Enables JWT auth; `JWT_SECRET` also signs login tokens |
 | `JWT_ISSUER` / `JWT_AUDIENCE`| no       | —                        | Validated when set                      |
+| `ACCESS_TOKEN_TTL`           | no       | `30m`                    | Login access-token lifetime             |
+| `REFRESH_TOKEN_TTL_DAYS`     | no       | `7`                      | Refresh-token lifetime (days)           |
 | `RATELIMIT_RPS`              | no       | `1000`                   | Per-tenant requests/second              |
 | `RATELIMIT_BURST`            | no       | `2000`                   | Reserved for burst tuning               |
 | `DEFAULT_MONTHLY_BUDGET_USD` | no       | `50`                     | Per-tenant cap; `0` disables            |
 | `TELEMETRY_RETENTION_DAYS`   | no       | `30`                     | TTL for `request_logs`                  |
 | `OPENAI_API_KEY`             | no       | —                        | BYOK for the AI proxy                    |
 | `ANTHROPIC_API_KEY`          | no       | —                        | BYOK for the AI proxy                    |
-| `ALLOWED_ORIGINS`            | no       | —                        | Comma-separated CORS origins            |
+| `GATEWAY_SHARED_SECRET`      | no       | —                        | Sent upstream as `x-gateway-secret`; set the same value on the API to block bypass |
+| `ALLOWED_ORIGINS`            | no       | —                        | Comma-separated CORS origins — **must include the deployed frontend origin in production** |
 | `NODE_ENV`                   | no       | `development`            | `development` / `test` / `production`   |
 | `PORT`                       | no       | `8787`                   | Local dev server port                   |
 

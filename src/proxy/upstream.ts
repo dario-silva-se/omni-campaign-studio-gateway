@@ -45,6 +45,10 @@ export async function proxyToUpstream(
     headers.set('x-gateway-tenant', principal.tenantId)
     headers.set('x-forwarded-by', 'omni-campaign-studio-gateway')
   }
+  // Prove the request came through the gateway (upstream may require this).
+  if (env.GATEWAY_SHARED_SECRET) {
+    headers.set('x-gateway-secret', env.GATEWAY_SHARED_SECRET)
+  }
 
   const method = c.req.method
   const body =
@@ -52,12 +56,24 @@ export async function proxyToUpstream(
 
   let upstream: Response
   try {
-    upstream = await fetch(url, { method, headers, body })
+    upstream = await fetch(url, {
+      method,
+      headers,
+      body,
+      signal: AbortSignal.timeout(env.UPSTREAM_TIMEOUT_MS),
+    })
   } catch (err) {
     log.error('upstream fetch failed', {
       url: url.toString(),
       error: (err as Error).message,
     })
+    // AbortSignal.timeout aborts with a TimeoutError — surface that as 504.
+    if ((err as Error).name === 'TimeoutError') {
+      return c.json(
+        { error: 'Gateway Timeout', message: 'Upstream API did not respond in time' },
+        504,
+      )
+    }
     return c.json(
       { error: 'Bad Gateway', message: 'Upstream API is unreachable' },
       502,
