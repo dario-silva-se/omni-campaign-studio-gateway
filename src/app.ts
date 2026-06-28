@@ -4,12 +4,14 @@ import { cors } from 'hono/cors'
 import { allowedOrigins } from './config/env.js'
 import type { GatewayVariables } from './auth/principal.js'
 import { authenticate, requireScope } from './auth/middleware.js'
-import { rateLimit } from './ratelimit/limiter.js'
+import { rateLimit, authRateLimit } from './ratelimit/limiter.js'
 import { enforceBudget } from './cost/budget.js'
 import { telemetry } from './telemetry/middleware.js'
 import { proxyToUpstream } from './proxy/upstream.js'
 import { aiRouter } from './ai/handler.js'
 import { adminKeysRouter } from './admin/keys.js'
+import { adminUsersRouter } from './admin/users.js'
+import { authRouter } from './routes/auth.js'
 import { healthRouter } from './routes/health.js'
 import { metricsRouter } from './routes/metrics.js'
 import { usageRouter } from './routes/usage.js'
@@ -50,15 +52,27 @@ export function createApp(): Hono<{ Variables: GatewayVariables }> {
         'X-RateLimit-Reset',
         'Retry-After',
       ],
+      // Required so the browser sends/stores the httpOnly refresh cookie.
+      credentials: true,
     }),
   )
 
-  // Public health check — registered before auth so monitors need no credential.
+  // Public surfaces — registered before auth so they need no access token.
   app.route('/_gw/health', healthRouter)
+  // Auth endpoints (login/refresh/logout) are public but IP-rate-limited.
+  app.use('/_gw/auth/login', authRateLimit)
+  app.use('/_gw/auth/refresh', authRateLimit)
+  app.route('/_gw/auth', authRouter)
 
   // Everything below requires authentication + is rate limited.
   app.use('*', authenticate)
   app.use('*', rateLimit)
+
+  // Authenticated identity probe.
+  app.get('/_gw/auth/me', (c) => {
+    const p = c.get('principal')
+    return c.json({ tenantId: p.tenantId, scopes: p.scopes, source: p.source })
+  })
 
   // Control plane (authorization per surface).
   app.use('/_gw/metrics', requireScope('admin'))
@@ -66,7 +80,10 @@ export function createApp(): Hono<{ Variables: GatewayVariables }> {
   app.route('/_gw/usage', usageRouter)
   app.use('/_gw/keys', requireScope('admin'))
   app.use('/_gw/keys/*', requireScope('admin'))
+  app.use('/_gw/users', requireScope('admin'))
+  app.use('/_gw/users/*', requireScope('admin'))
   app.route('/_gw', adminKeysRouter)
+  app.route('/_gw', adminUsersRouter)
 
   // AI proxy — billable, budget-enforced, requires ai:invoke.
   app.use('/ai/*', requireScope('ai:invoke'))

@@ -64,6 +64,33 @@ export interface UsageMonthlyDoc {
   updatedAt: string
 }
 
+export interface UserDoc {
+  /** Stable id (uuid). */
+  _id: string
+  /** Login identifier; unique, stored lowercased. */
+  email: string
+  /** scrypt hash in `salt:hash` hex form — the raw password is never stored. */
+  passwordHash: string
+  /** Tenant the user belongs to (groups usage/budget). */
+  tenantId: string
+  /** Granted scopes (may include `ai:invoke`). */
+  scopes: Scope[]
+  status: 'active' | 'disabled'
+  createdAt: string
+  lastLoginAt?: string
+}
+
+export interface AuthSessionDoc {
+  /** Stable id (uuid). */
+  _id: string
+  userId: string
+  /** SHA-256 hex of the refresh token — the raw token is never stored. */
+  refreshHash: string
+  /** Backs the TTL index; the session expires at this instant. */
+  expiresAt: Date
+  createdAt: Date
+}
+
 /* ------------------------------- Accessors ------------------------------- */
 
 export async function apiKeysCollection(): Promise<Collection<ApiKeyDoc>> {
@@ -78,16 +105,26 @@ export async function usageMonthlyCollection(): Promise<Collection<UsageMonthlyD
   return (await getDb()).collection<UsageMonthlyDoc>('usage_monthly')
 }
 
+export async function usersCollection(): Promise<Collection<UserDoc>> {
+  return (await getDb()).collection<UserDoc>('users')
+}
+
+export async function authSessionsCollection(): Promise<Collection<AuthSessionDoc>> {
+  return (await getDb()).collection<AuthSessionDoc>('auth_sessions')
+}
+
 /**
  * Create indexes used by the gateway. Idempotent — safe to call from the seed
  * script and on demand. The request_logs TTL index expires telemetry after
  * TELEMETRY_RETENTION_DAYS.
  */
 export async function ensureIndexes(): Promise<void> {
-  const [keys, logs, usage] = await Promise.all([
+  const [keys, logs, usage, users, sessions] = await Promise.all([
     apiKeysCollection(),
     requestLogsCollection(),
     usageMonthlyCollection(),
+    usersCollection(),
+    authSessionsCollection(),
   ])
   await Promise.all([
     keys.createIndex({ hash: 1 }, { unique: true }),
@@ -98,6 +135,10 @@ export async function ensureIndexes(): Promise<void> {
     ),
     logs.createIndex({ tenantId: 1, createdAt: -1 }),
     usage.createIndex({ tenantId: 1, yyyymm: -1 }),
+    users.createIndex({ email: 1 }, { unique: true }),
+    sessions.createIndex({ refreshHash: 1 }, { unique: true }),
+    // TTL: expire sessions exactly at their expiresAt instant.
+    sessions.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
   ])
 }
 

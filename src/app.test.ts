@@ -117,6 +117,21 @@ describe('gateway pipeline', () => {
     expect(exposed).toContain('X-Request-Id')
   })
 
+  it('injects the gateway shared secret into upstream requests', async () => {
+    const spy = vi.fn(async (_url: any, init: any) => {
+      void _url
+      void init
+      return new Response(JSON.stringify([]), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    })
+    vi.stubGlobal('fetch', spy)
+    await app.request('/api/campaigns', auth('gw_admin'))
+    const init = spy.mock.calls[0]?.[1] as { headers: Headers }
+    expect(init.headers.get('x-gateway-secret')).toBe('test-gw-secret')
+  })
+
   it('maps an upstream timeout to 504 and other failures to 502', async () => {
     vi.stubGlobal(
       'fetch',

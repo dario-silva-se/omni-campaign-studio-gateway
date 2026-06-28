@@ -13,30 +13,32 @@ export interface LimitResult {
 }
 
 interface Limiter {
-  limit(identifier: string, max: number): Promise<LimitResult>
+  limit(identifier: string, max: number, windowMs?: number): Promise<LimitResult>
 }
 
-/** Upstash-backed sliding window (1s) limiter. */
+/** Upstash-backed sliding-window limiter (window configurable, default 1s). */
 class RedisLimiter implements Limiter {
-  private cache = new Map<number, Ratelimit>()
+  private cache = new Map<string, Ratelimit>()
 
   constructor(private readonly redis: NonNullable<ReturnType<typeof getRedis>>) {}
 
-  private forMax(max: number): Ratelimit {
-    let rl = this.cache.get(max)
+  private forWindow(max: number, windowMs: number): Ratelimit {
+    const key = `${max}:${windowMs}`
+    let rl = this.cache.get(key)
     if (!rl) {
+      const seconds = Math.max(1, Math.round(windowMs / 1000))
       rl = new Ratelimit({
         redis: this.redis,
-        limiter: Ratelimit.slidingWindow(max, '1 s'),
+        limiter: Ratelimit.slidingWindow(max, `${seconds} s`),
         prefix: 'gw:rl',
       })
-      this.cache.set(max, rl)
+      this.cache.set(key, rl)
     }
     return rl
   }
 
-  async limit(identifier: string, max: number): Promise<LimitResult> {
-    const r = await this.forMax(max).limit(identifier)
+  async limit(identifier: string, max: number, windowMs = 1000): Promise<LimitResult> {
+    const r = await this.forWindow(max, windowMs).limit(identifier)
     return { success: r.success, limit: r.limit, remaining: r.remaining, reset: r.reset }
   }
 }
@@ -45,14 +47,14 @@ class RedisLimiter implements Limiter {
 class MemoryLimiter implements Limiter {
   private hits = new Map<string, number[]>()
 
-  async limit(identifier: string, max: number): Promise<LimitResult> {
+  async limit(identifier: string, max: number, windowMs = 1000): Promise<LimitResult> {
     const now = Date.now()
-    const windowStart = now - 1000
+    const windowStart = now - windowMs
     const recent = (this.hits.get(identifier) ?? []).filter((t) => t > windowStart)
     const success = recent.length < max
     if (success) recent.push(now)
     this.hits.set(identifier, recent)
-    const reset = (recent[0] ?? now) + 1000
+    const reset = (recent[0] ?? now) + windowMs
     return {
       success,
       limit: max,
@@ -105,3 +107,28 @@ export const rateLimit: MiddlewareHandler<{ Variables: GatewayVariables }> =
     setRateLimitHeaders(c, result)
     return next()
   }
+
+/** Best-effort client IP for unauthenticated (pre-principal) rate limiting. */
+function clientIp(c: Context): string {
+  const fwd = c.req.header('x-forwarded-for')
+  if (fwd) return fwd.split(',')[0].trim()
+  return c.req.header('x-real-ip') ?? 'unknown'
+}
+
+const AUTH_MAX_ATTEMPTS = 10
+const AUTH_WINDOW_MS = 60_000
+
+/**
+ * Per-IP brute-force guard for the public auth endpoints (login/refresh), which
+ * run before authentication so the tenant-based limiter does not apply. Limits
+ * to {@link AUTH_MAX_ATTEMPTS} attempts per minute per IP.
+ */
+export const authRateLimit: MiddlewareHandler = async (c, next: Next) => {
+  const result = await limiter.limit(
+    `auth:${clientIp(c)}`,
+    AUTH_MAX_ATTEMPTS,
+    AUTH_WINDOW_MS,
+  )
+  if (!result.success) return tooManyRequests(c, result)
+  return next()
+}

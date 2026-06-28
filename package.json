@@ -14,7 +14,8 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "seed:keys": "tsx scripts/seed-keys.ts"
+    "seed:keys": "tsx scripts/seed-keys.ts",
+    "seed:user": "tsx scripts/seed-user.ts"
   },
   "dependencies": {
     "@hono/node-server": "^2.0.6",

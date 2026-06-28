@@ -45,6 +45,10 @@ export async function proxyToUpstream(
     headers.set('x-gateway-tenant', principal.tenantId)
     headers.set('x-forwarded-by', 'omni-campaign-studio-gateway')
   }
+  // Prove the request came through the gateway (upstream may require this).
+  if (env.GATEWAY_SHARED_SECRET) {
+    headers.set('x-gateway-secret', env.GATEWAY_SHARED_SECRET)
+  }
 
   const method = c.req.method
   const body =
