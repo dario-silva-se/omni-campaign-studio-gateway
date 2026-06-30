@@ -76,18 +76,53 @@ const EnvSchema = z.object({
 
 export type Env = z.infer<typeof EnvSchema>
 
-function loadEnv(): Env {
+/**
+ * Parse the environment WITHOUT throwing at import time. On a serverless platform
+ * a top-level throw turns into an opaque FUNCTION_INVOCATION_FAILED with no useful
+ * body; instead we expose `envError` so a request-time guard can return a clear
+ * message (e.g. "UPSTREAM_API_URL must be a valid URL"). `env` is always a
+ * valid-shaped object so module-level reads (CORS, JWT/Upstash flags) never crash.
+ * Mirrors the convention used by omni-campaign-studio-api.
+ */
+function loadEnv(): { env: Env; error: string | null } {
   const parsed = EnvSchema.safeParse(process.env)
-  if (!parsed.success) {
-    const issues = parsed.error.issues
-      .map((i) => `  - ${i.path.join('.') || '(root)'}: ${i.message}`)
-      .join('\n')
-    throw new Error(`Invalid environment configuration:\n${issues}`)
+  if (parsed.success) return { env: parsed.data, error: null }
+
+  const issues = parsed.error.issues
+    .map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`)
+    .join('; ')
+  const fallback: Env = {
+    UPSTREAM_API_URL: normalizeBaseUrl(process.env.UPSTREAM_API_URL ?? ''),
+    MONGODB_URI: process.env.MONGODB_URI ?? '',
+    MONGODB_DB_NAME: process.env.MONGODB_DB_NAME ?? '',
+    UPSTASH_REDIS_REST_URL: process.env.UPSTASH_REDIS_REST_URL,
+    UPSTASH_REDIS_REST_TOKEN: process.env.UPSTASH_REDIS_REST_TOKEN,
+    JWT_JWKS_URL: process.env.JWT_JWKS_URL,
+    JWT_SECRET: process.env.JWT_SECRET,
+    JWT_ISSUER: process.env.JWT_ISSUER,
+    JWT_AUDIENCE: process.env.JWT_AUDIENCE,
+    ACCESS_TOKEN_TTL: process.env.ACCESS_TOKEN_TTL ?? '30m',
+    REFRESH_TOKEN_TTL_DAYS: Number(process.env.REFRESH_TOKEN_TTL_DAYS) || 7,
+    UPSTREAM_TIMEOUT_MS: Number(process.env.UPSTREAM_TIMEOUT_MS) || 15000,
+    RATELIMIT_RPS: Number(process.env.RATELIMIT_RPS) || 1000,
+    RATELIMIT_BURST: Number(process.env.RATELIMIT_BURST) || 2000,
+    DEFAULT_MONTHLY_BUDGET_USD: Number(process.env.DEFAULT_MONTHLY_BUDGET_USD) || 50,
+    TELEMETRY_RETENTION_DAYS: Number(process.env.TELEMETRY_RETENTION_DAYS) || 30,
+    OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+    ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
+    GATEWAY_SHARED_SECRET: process.env.GATEWAY_SHARED_SECRET,
+    ALLOWED_ORIGINS: process.env.ALLOWED_ORIGINS ?? '',
+    NODE_ENV: (process.env.NODE_ENV as Env['NODE_ENV']) ?? 'production',
   }
-  return parsed.data
+  return { env: fallback, error: `Invalid environment configuration: ${issues}` }
 }
 
-export const env = loadEnv()
+const loaded = loadEnv()
+
+export const env = loaded.env
+
+/** Non-null when required env vars are missing/invalid; surfaced via a request guard. */
+export const envError = loaded.error
 
 /** Origins allowed by CORS. localhost:5173 (Vite dev) is always permitted. */
 export const allowedOrigins = Array.from(
