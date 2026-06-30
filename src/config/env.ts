@@ -1,4 +1,15 @@
+import { existsSync } from 'node:fs'
 import { z } from 'zod'
+
+/**
+ * Load variables from a local .env file into process.env, if one exists.
+ * Real deployments inject env vars directly (no .env), so this is best-effort:
+ * we only load when the file is present. Uses Node's built-in loader — no
+ * dotenv dependency required (Node >= 20.6).
+ */
+if (existsSync('.env')) {
+  process.loadEnvFile('.env')
+}
 
 /** Strip trailing slashes from a base URL so concatenation never yields `//`. */
 export function normalizeBaseUrl(url: string): string {
