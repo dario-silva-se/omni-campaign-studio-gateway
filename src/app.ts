@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import type { MiddlewareHandler, Next } from 'hono'
 import { cors } from 'hono/cors'
-import { allowedOrigins } from './config/env.js'
+import { allowedOrigins, envError } from './config/env.js'
 import type { GatewayVariables } from './auth/principal.js'
 import { authenticate, requireScope } from './auth/middleware.js'
 import { rateLimit, authRateLimit } from './ratelimit/limiter.js'
@@ -34,6 +34,16 @@ export function createApp(): Hono<{ Variables: GatewayVariables }> {
 
   // Telemetry first so it also captures auth/limit/budget rejections.
   app.use('*', telemetry)
+
+  // Fail loudly but legibly when required env vars are missing, instead of
+  // crashing at module load with an opaque serverless 500.
+  app.use('*', async (c, next) => {
+    if (envError) {
+      return c.json({ error: 'Server misconfigured', message: envError }, 500)
+    }
+    return next()
+  })
+
   app.use(
     '*',
     cors({
