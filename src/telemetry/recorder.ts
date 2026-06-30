@@ -7,6 +7,7 @@ import {
 } from '../db/collections.js'
 import { record as recordMetric } from './metrics.js'
 import { log } from './logger.js'
+import { runBackground } from './background.js'
 import { env } from '../config/env.js'
 
 export interface RequestRecord {
@@ -46,9 +47,15 @@ export function recordRequest(entry: RequestRecord): void {
   // Skip durable persistence under tests (no Mongo available).
   if (env.NODE_ENV === 'test') return
 
-  void persist(entry).catch((err) => {
-    log.warn('telemetry persist failed', { error: (err as Error).message })
-  })
+  // Persist out of band. On serverless this MUST be registered as background work
+  // (see runBackground) — a bare detached promise blocks the response until Mongo
+  // settles, which a slow/unreachable Mongo never does, yielding a 504 on every
+  // request instead of a quietly-dropped log line.
+  runBackground(
+    persist(entry).catch((err) => {
+      log.warn('telemetry persist failed', { error: (err as Error).message })
+    }),
+  )
 }
 
 async function persist(entry: RequestRecord): Promise<void> {
