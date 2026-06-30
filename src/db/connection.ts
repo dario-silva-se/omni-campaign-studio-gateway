@@ -26,7 +26,14 @@ function createClientPromise(): Promise<MongoClient> {
 
 function getClientPromise(): Promise<MongoClient> {
   if (!globalThis.__gatewayMongoClientPromise) {
-    globalThis.__gatewayMongoClientPromise = createClientPromise()
+    // Evict the cached promise if the connection fails. Otherwise a single failed
+    // attempt (e.g. Atlas unreachable at the moment) caches a rejected promise on
+    // globalThis, and every warm invocation keeps serving that rejection — never
+    // retrying — until the container cold-starts, even after the cause is fixed.
+    globalThis.__gatewayMongoClientPromise = createClientPromise().catch((err) => {
+      globalThis.__gatewayMongoClientPromise = undefined
+      throw err
+    })
   }
   return globalThis.__gatewayMongoClientPromise
 }
