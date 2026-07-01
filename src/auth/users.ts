@@ -7,6 +7,7 @@ export interface CreateUserInput {
   password: string
   tenantId: string
   scopes: Scope[]
+  name?: string
 }
 
 function normalizeEmail(email: string): string {
@@ -23,6 +24,7 @@ export async function createUser(input: CreateUserInput): Promise<UserDoc> {
     scopes: input.scopes,
     status: 'active',
     createdAt: new Date().toISOString(),
+    ...(input.name?.trim() ? { name: input.name.trim() } : {}),
   }
   const col = await usersCollection()
   await col.insertOne(doc)
