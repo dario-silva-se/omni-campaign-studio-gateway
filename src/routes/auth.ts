@@ -1,17 +1,18 @@
+import { randomUUID } from 'node:crypto'
 import { Hono } from 'hono'
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { env } from '../config/env.js'
 import type { GatewayVariables } from '../auth/principal.js'
-import { findById, touchLogin, verifyCredentials } from '../auth/users.js'
+import { createUser, findById, touchLogin, verifyCredentials } from '../auth/users.js'
 import {
   issueAccessToken,
   mintRefresh,
   revokeRefresh,
   rotateRefresh,
 } from '../auth/issue.js'
-import type { UserDoc } from '../db/collections.js'
+import type { Scope, UserDoc } from '../db/collections.js'
 
 const REFRESH_COOKIE = 'gw_refresh'
 const COOKIE_PATH = '/_gw/auth'
@@ -49,8 +50,26 @@ function setRefreshCookie(c: Parameters<typeof setCookie>[0], raw: string) {
 }
 
 function publicUser(user: UserDoc) {
-  return { id: user._id, email: user.email, tenantId: user.tenantId, scopes: user.scopes }
+  return {
+    id: user._id,
+    email: user.email,
+    name: user.name,
+    tenantId: user.tenantId,
+    scopes: user.scopes,
+  }
 }
+
+const RegisterSchema = z.object({
+  name: z.string().min(1),
+  email: z.string().email(),
+  password: z.string().min(8),
+})
+
+/**
+ * Self-service signup gets a fresh, isolated tenant and the standard
+ * non-privileged scopes — never `admin` (that path stays behind `/_gw/users`).
+ */
+const SELF_SIGNUP_SCOPES: Scope[] = ['api:read', 'api:write', 'ai:invoke']
 
 /**
  * Public authentication endpoints (token-exchange). Mounted at `/_gw/auth`
@@ -77,6 +96,42 @@ authRouter.post(
     setRefreshCookie(c, refresh)
     touchLogin(user._id)
     return c.json({ accessToken, expiresIn, user: publicUser(user) })
+  },
+)
+
+/**
+ * Public self-service signup. Creates an active user in a brand-new isolated
+ * tenant, then logs them straight in (access token + refresh cookie), mirroring
+ * the login response shape. Admin-provisioned users still go through
+ * `/_gw/users` (which can set tenant + scopes, including `admin`).
+ */
+authRouter.post(
+  '/register',
+  zValidator('json', RegisterSchema, validationHook as any),
+  async (c) => {
+    if (!env.JWT_SECRET) {
+      return c.json({ error: 'Service Unavailable', message: 'Auth is not configured' }, 503)
+    }
+    const { name, email, password } = c.req.valid('json' as never) as z.infer<typeof RegisterSchema>
+    let user: UserDoc
+    try {
+      user = await createUser({
+        name,
+        email,
+        password,
+        tenantId: randomUUID(),
+        scopes: SELF_SIGNUP_SCOPES,
+      })
+    } catch (err) {
+      if ((err as { code?: number }).code === 11000) {
+        return c.json({ error: 'Conflict', message: 'Email already exists' }, 409)
+      }
+      throw err
+    }
+    const { accessToken, expiresIn } = await issueAccessToken(user)
+    const refresh = await mintRefresh(user._id)
+    setRefreshCookie(c, refresh)
+    return c.json({ accessToken, expiresIn, user: publicUser(user) }, 201)
   },
 )
 

@@ -6,6 +6,7 @@ vi.mock('../auth/users.js', () => ({
   verifyCredentials: vi.fn(),
   findById: vi.fn(),
   touchLogin: vi.fn(),
+  createUser: vi.fn(),
 }))
 vi.mock('../auth/issue.js', () => ({
   issueAccessToken: vi.fn(async () => ({ accessToken: 'access-tok', expiresIn: 1800 })),
@@ -61,6 +62,55 @@ describe('auth routes', () => {
       body: JSON.stringify({ email: 'admin@acme.com', password: 'bad' }),
     })
     expect(res.status).toBe(401)
+  })
+
+  it('registers a new user, auto-logs in (201) and sets a refresh cookie', async () => {
+    ;(users.createUser as any).mockImplementation(async (input: any) => ({
+      _id: 'u-new',
+      email: input.email,
+      name: input.name,
+      tenantId: input.tenantId,
+      scopes: input.scopes,
+      status: 'active',
+    }))
+    const app = makeApp()
+    const res = await app.request('/_gw/auth/register', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'Maria Silva', email: 'maria@acme.com', password: 'secret12' }),
+    })
+    expect(res.status).toBe(201)
+    const body = (await res.json()) as any
+    expect(body.accessToken).toBe('access-tok')
+    expect(body.user.email).toBe('maria@acme.com')
+    expect(body.user.name).toBe('Maria Silva')
+    // Self-signup gets a generated tenant and standard non-admin scopes.
+    const passed = (users.createUser as any).mock.calls[0][0]
+    expect(passed.tenantId).toBeTruthy()
+    expect(passed.scopes).toEqual(['api:read', 'api:write', 'ai:invoke'])
+    expect(res.headers.get('set-cookie') ?? '').toContain('gw_refresh=')
+  })
+
+  it('returns 409 when the email already exists', async () => {
+    ;(users.createUser as any).mockRejectedValue(Object.assign(new Error('dup'), { code: 11000 }))
+    const app = makeApp()
+    const res = await app.request('/_gw/auth/register', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'Maria', email: 'taken@acme.com', password: 'secret12' }),
+    })
+    expect(res.status).toBe(409)
+  })
+
+  it('rejects registration with a short password (422)', async () => {
+    const app = makeApp()
+    const res = await app.request('/_gw/auth/register', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'Maria', email: 'maria@acme.com', password: 'short' }),
+    })
+    expect(res.status).toBe(422)
+    expect(users.createUser).not.toHaveBeenCalled()
   })
 
   it('refreshes when a valid cookie is present', async () => {

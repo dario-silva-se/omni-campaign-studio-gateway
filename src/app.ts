@@ -69,8 +69,9 @@ export function createApp(): Hono<{ Variables: GatewayVariables }> {
 
   // Public surfaces — registered before auth so they need no access token.
   app.route('/_gw/health', healthRouter)
-  // Auth endpoints (login/refresh/logout) are public but IP-rate-limited.
+  // Auth endpoints (login/register/refresh/logout) are public but IP-rate-limited.
   app.use('/_gw/auth/login', authRateLimit)
+  app.use('/_gw/auth/register', authRateLimit)
   app.use('/_gw/auth/refresh', authRateLimit)
   app.route('/_gw/auth', authRouter)
 

@@ -69,6 +69,8 @@ export interface UserDoc {
   _id: string
   /** Login identifier; unique, stored lowercased. */
   email: string
+  /** Optional display name (collected at self-registration). */
+  name?: string
   /** scrypt hash in `salt:hash` hex form — the raw password is never stored. */
   passwordHash: string
   /** Tenant the user belongs to (groups usage/budget). */
